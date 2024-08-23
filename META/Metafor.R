@@ -10,7 +10,7 @@ library(gridExtra)
 
 #################################### Estimating mean effect sizes of herbivores among types of restoration
 # setup directory
-setwd("D:/博士/文章1/1.7/2")
+setwd("/home/meta")
 # Load data-------
 dat <- read.xlsx("data/pathogen.xlsx", 1)
 nrow(dat) #2266
