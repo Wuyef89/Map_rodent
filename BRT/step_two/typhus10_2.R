@@ -105,7 +105,7 @@ model_data <- terra::extract(rasters, point, df = TRUE, ID = FALSE)
 model_data$Abspres <- as.numeric(point$Abspres)
 model_data$RodentsPoints<-as.factor(model_data$RodentsPoints)
 colnames(model_data)
-model_data<-model_data[,c(6,8,11,21,15,14,17,9,5,24,19,25)] # Variables selected based on 5-fold cross-validation
+model_data<-model_data[,c(6,8,11,21,15,14,17,9,5,24,25)] # Variables selected based on 5-fold cross-validation
 colnames(model_data)
 
 # Create a table to store the predictions
@@ -118,7 +118,7 @@ folds <- scv1$folds_list
 for(k in seq_len(length(folds))){  
   trainSet <- unlist(folds[[k]][1]) 
   testSet <- unlist(folds[[k]][2]) 
-  model_list[[k]] <- gbm.step(model_data[trainSet, ], gbm.x=1:11,gbm.y=12,family="bernoulli",
+  model_list[[k]] <- gbm.step(model_data[trainSet, ], gbm.x=1:10,gbm.y=11,family="bernoulli",
                               tree.complexity=5,learning.rate=0.001,bag.fraction=0.5,max.trees=20000) 
   test_table$preds[testSet] <- predict.gbm(model_list[[k]], model_data[testSet, ], 
                                            n.trees=model_list[[k]]$gbm.call$best.trees, type="response")
