@@ -1,55 +1,72 @@
-
 library(metafor)
 library(reshape2)
 library(car)
 library(openxlsx)
 library(tidyverse)
+library(boot)
 library(aod)
 library(gridExtra)
 
+setwd("/data/home/wuhongyan/meta")
+base_path <- "/data/home/wuhongyan/meta"
+input_file <- file.path(base_path, "data/Supplementary Table 2.xlsx")
+output_path <- file.path(base_path, "results")
+set.seed(123)
 
-#################################### Estimating mean effect sizes of herbivores among types of restoration
-# setup directory
-setwd("/home/meta")
 # Load data-------
-dat <- read.xlsx("data/Supplementary Table 2.xlsx", 1)
-nrow(dat) #2266
+df <- read.xlsx("data/Supplementary Table 2.xlsx", 1)
 
-#Delete all pathogens with pathogen positivity less than 5 rodents
+# Remove unwanted columns using select()
+dat <- df[, setdiff(names(df), c("Chinese_rodent_name", "Original_rodents",
+                                 "Original_pathogens", "Standardization"))]
+ 
+# Filter rows where pathogen_species is greater than or equal to 5
 data <- dat %>%
   group_by(Pathogen_species) %>%
   filter(sum(Events) >= 5) %>%
   ungroup() 
-nrow(data) #2180
-# write.xlsx(data, "filtered_excel_file.xlsx")
 
-## Extract exact indexes of non-NA values (classification greater than or equal to 2)
-data <- data[-which(is.na(data$Ndvi)),,]
-nrow(data) #2173
-# write.xlsx(data, "filtered_excel_file.xlsx")
+# Keep only healthy rodents
+data <- data %>%
+  filter(Health_status == "Healthy") 
+
+# Remove missing values ​​and unclear classification
+data <- data[-which(is.na(data$NDVI)),,]
 data <- data[-which(is.na(data$Time_interval)),,]
-nrow(data) #1723
-# write.xlsx(data, "filtered_excel_file.xlsx")
-data <- data[-which(data$Rodent_classification=='unknown source'),,]
-nrow(data)#949
-data <- data[-which(data$Detection_method=='unknown detection method'),,]
-nrow(data) #947
-data <- data[-which(data$Sample_source%in%c('unclassified sample')==TRUE),,]
-nrow(data) #938
-# write.xlsx(data, "filtered_excel_file.xlsx")
+data <- data[-which(data$Rodents_type == 'Unknown'),,]
+data <- data[-which(data$Test_method =='Unidentified examination method'),,]
+data <- data[-which(data$Sample_source%in%c('Unclassified sample')==TRUE),,]
+nrow(data) #1214
 
+# Define a function to set factor levels
+define_factor_levels <- function(data, column_name, levels_order) {
+  data[[column_name]] <- factor(data[[column_name]], levels = levels_order)
+  return(data)
+}
 
-# Define the names of the columns to be filtered
-columns_to_check <- c("Rodent_family", "Time_interval", "Rodent_classification", "Sample_source", 
-                      "Detection_method", "Ndvi", "Geographic_division")
+# Define the levels for each column
+levels_list <- list(
+  Rodents_type = c('Captive', 'Commensal', 'Wild'),
+  Sample_source = c('Alimentary or intestinal sample', 'Blood or serum sample', 
+                    'Body surface sample', 'Brain sample', 'Heart sample', 'Kidney sample', 
+                    'Liver sample', 'Lung or respiratory tract sample', 'Spleen sample', 
+                    'Mixed tissue sample'),
+  Test_method = c('Gross or microscopy examination', 'Molecular examination', 'Serological examination'),
+  Rodent_family = c('Caviidae', 'Chinchillidae', 'Cricetidae', 'Dipodidae', 'Hystricidae', 
+                    'Muridae', 'Myocastoridae', 'Nesomyidae', 'Sciuridae', 'Spalacidae'),
+  Geographical_division = c('Central China', 'East China', 'North China', 'Northeast China', 
+                            'Northwest China', 'South China', 'Southwest China'),
+  Time_interval = c('1950-2000', '2001-2010', '2011-2019', '2020-2023'),
+  NDVI = c('Peak NDVI', 'Higher NDVI', 'Medium NDVI', 'Low NDVI')
+)
 
-# Create a function that filters categories with at least 2 records per column.
-filter_data <- function(data, columns) {
+# Define a function to filter data by minimum group size
+filter_data <- function(data, columns, min_count = 2) {
   for (column in columns) {
     if (column %in% names(data)) {
       data <- data %>%
         group_by(across(all_of(column))) %>%
-        filter(n() >= 2) %>%
+        filter(n() >= min_count) %>%
         ungroup()
     } else {
       warning(paste("Column", column, "does not exist in the data."))
@@ -58,72 +75,28 @@ filter_data <- function(data, columns) {
   return(data)
 }
 
-data <- filter_data(data, columns_to_check)
-nrow(data) #937
-# write.xlsx(filtered_data, "filtered_excel_file1.xlsx")
+# Define datasets and columns to check
+datasets <- list(
+  data_a = data,
+  data_v = data %>% filter(Pathogen_type == "Viruses"),
+  data_b = data %>% filter(Pathogen_type == "Bacteria"),
+  data_p = data %>% filter(Pathogen_type == "Parasites")
+)
+columns_to_check <- c("Rodents_type", "Sample_source", "Test_method", 
+                      "Rodent_family", "Geographical_division", "Time_interval", "NDVI")
 
-colnames(data)
-# [1] "NO."                      "Rodent_species"           "Rodent_genus"            
-# [4] "Rodent_family"            "Events"                   "Total"                   
-# [7] "Time_interval"            "Rodent_classification"   "Sample_source"           
-# [10] "Detection_method"         "Pathogen_species"         "Ndvi"                    
-# [13] "Pathogen_family"          "Pathogen_classiffication" "Province"                
-# [16] "Geographic_division"    "Sampling_time"            "Year"                    
-# [19] "Literature_sources"       "Author"                   "Title"                   
-# [22] "Study"                   
+# Apply transformations to each dataset
+datasets <- lapply(datasets, function(dataset) {
+  for (col_name in names(levels_list)) {
+    dataset <- define_factor_levels(dataset, col_name, levels_list[[col_name]])
+  }
+  dataset$Observation <- factor(1:nrow(dataset))
+  dataset$Study <- factor(dataset$Study)
+  filter_data(dataset, columns_to_check)
+})
 
 
-# change order of factor levels
-##Geographic_division
-data$Geographic_division <- as.factor(data$Geographic_division)
-data$Geographic_division <- factor(data$Geographic_division, levels=c('Central China',
-                                                                      'East China',
-                                                                      'North China',
-                                                                      'Northeast China',
-                                                                      'Northwest China',
-                                                                      'South China',
-                                                                      'Southwest China'))
-#Ndvi
-data$Ndvi <- as.factor(data$Ndvi)
-data$Ndvi <- factor(data$Ndvi, levels=c('Peak ndvi','Higher ndvi',
-                                        'Medium ndvi','Low ndvi'))
-
-#Rodent_classification
-data$Rodent_classification <- as.factor(data$Rodent_classification)
-data$Rodent_classification <- factor(data$Rodent_classification, levels=c('Wild','Commensal','Captive'))
-head(data)
-##Sample_source
-data$Sample_source <- as.factor(data$Sample_source)
-data$Sample_source <- factor(data$Sample_source, levels=c('Alimentary or intestinal or faeces sample',
-                                                          'Blood or serum sample',
-                                                          'Body surface sample',
-                                                          'Brain sample',
-                                                          'Heart sample',
-                                                          'Kidney sample',
-                                                          'Liver sample',
-                                                          'Lung or respiratory tracts',
-                                                          'Spleen sample',
-                                                          'Mixed tissues'))
-
-##Detection_method
-data$Detection_method <- as.factor(data$Detection_method)
-data$Detection_method <- factor(data$Detection_method, levels=c('Gross observation or microbes',
-                                                                'Molecular diagnostics',
-                                                                'Serological examination'))
-##Rodent_family
-data$Rodent_family <- as.factor(data$Rodent_family)
-data$Rodent_family <- factor(data$Rodent_family, levels=c('Caviidae','Chinchillidae','Cricetidae',
-                                                          'Dipodidae','Hystricidae','Muridae',
-                                                          'Myocastoridae','Nesomyidae','Sciuridae',
-                                                          'Spalacidae'))
-
-##Time_interval
-data$Time_interval <- as.factor(data$Time_interval)
-data$Time_interval <- factor(data$Time_interval, levels=c('1950-2000',
-                                                          '2001-2010',
-                                                          '2011-2019',
-                                                          '2020-2023'))
-#calculateI2
+## I² represents the percentage of variance in effect sizes that cannot be attributed to sampling error.
 i2=function(model){
   
   ## metafor site code for I2
@@ -134,338 +107,322 @@ i2=function(model){
   I2=round(I2,2)
   
   ## summarize by each variance component
-  allI2=100 * model$sigma2 / (sum(model$sigma2) + (model$k-model$p)/sum(diag(P))) ##"sigma"（σ）通常指的是标准差
+  allI2=100 * model$sigma2 / (sum(model$sigma2) + (model$k-model$p)/sum(diag(P))) 
   return(list(I2=I2,allI2=allI2))
 }
 
-data=data.frame(data,escalc(xi=data$Events,ni=data$Total,measure="PLN"))
-data$original_ratio <- exp(data$yi)
-# write.xlsx(data,"data_z.xlsx")
+#  Calculating effect size
+calc_effect_size <- function(data) {
+  data <- data.frame(data, escalc(xi = data$Events, ni = data$Total, measure = "PLN"))
+  data$original_ratio <- exp(data$yi)
+  return(data)
+}
 
-# make observation and study-level random effect
-data$observation=factor(1:nrow(data))
-data$Study=factor(data$Study)
+datasets <- lapply(datasets, calc_effect_size)
+# Assign back the modified datasets
+data_a <- datasets[[1]]
+data_v <- datasets[[2]]
+data_b <- datasets[[3]]
+data_p <- datasets[[4]]
 
-# Fit a mixed-effects model
-fit_null <- rma.mv(yi, vi, random=~1|Study/observation, 
-                   method="REML", data=data,
-                   control=list(optimizer="optim", optmethod="BFGS")) 
-fit_null
 
-# Compare models (add first covariate)
-fit_var1 <- update(fit_null, mods = ~ Detection_method-1)
-fit_var2 <- update(fit_null, mods = ~ Geographic_division-1)
-fit_var3 <- update(fit_null, mods = ~ Ndvi-1)
-fit_var4 <- update(fit_null, mods = ~ Rodent_classification-1)
-fit_var5 <- update(fit_null, mods = ~ Rodent_family-1)
-fit_var6 <- update(fit_null, mods = ~ Time_interval-1)
-fit_var7 <- update(fit_null, mods = ~ Sample_source-1)
-
-# Check for variable covariance, when GVIF^(1/(2Df)) is greater than 2, it indicates a more severe covariance problem
-vif_values <- vif(lm(yi ~ Detection_method + Geographic_division + Ndvi + Rodent_classification + 
-                       Rodent_family + Time_interval + Sample_source,
-                     data = data))
-vif_values
-
-# Setting up the optimizer and optimization methods
+###############  Full dataset; full_model
 control <- list(optimizer="optim", optmethod="L-BFGS-B")
 
-# Setting up the model
-fit <- rma.mv(yi, vi, mods=~Detection_method + Geographic_division + Ndvi + Rodent_classification + 
-                            Rodent_family + Time_interval + Sample_source-1,
-              random=~1|Study/observation, 
-              method="REML", data=data,
-              control=control,
-              verbose=TRUE)
+###############  Sub_dataset; Sub_models
+boot.func <- function(dataset) {
+  indices <- sample(1:nrow(dataset), replace = TRUE)  
+  dataset[indices, ]  
+}
 
-fit 
+# Bootstrap resampling
+set.seed(123)
+bootstrap_data_a <- lapply(1:999, function(i) boot.func(data_a))
+bootstrap_data_v <- lapply(1:999, function(i) boot.func(data_v))
+bootstrap_data_b <- lapply(1:999, function(i) boot.func(data_b))
+bootstrap_data_p <- lapply(1:999, function(i) boot.func(data_p))
 
-# Testing the significance of fixed effects in the model
-anova(fit)
+# Update data_list to contain multiple resampled data lists
+resampled_data_list <- list(a = bootstrap_data_a, v = bootstrap_data_v, b = bootstrap_data_b, p = bootstrap_data_p)
 
-###############   viruses    ###################################################
+# Define function: Calculate GVIF and remove highly collinear variables
+filter_high_vif <- function(data, threshold = 2) {
+  full_formula <- yi ~ Sample_source + Geographical_division + Rodents_type + 
+    Test_method + Rodent_family + Time_interval + NDVI - 1
+  repeat {
+    lm_model <- lm(full_formula, data = data)
+    vif_values <- vif(lm_model)
+    gvif <- vif_values[, 1]^(1 / (2 * vif_values[, 2]))  
+    high_vif_vars <- names(gvif[gvif > threshold])  
+    if (length(high_vif_vars) == 0) break  
+    full_formula <- update(full_formula, paste(". ~ . -", high_vif_vars[1]))  
+  }
+  return(full_formula)  
+}
 
-data_v <- data %>% filter(Pathogen_classiffication=="Viruses")
-nrow(data_v) # 427
-# write.xlsx(data_v,"data_v.xlsx")
+# Remove highly collinear variables
+process_bootstrap_data <- function(bootstrap_data, threshold = 2) {
+  results <- lapply(bootstrap_data, function(data) {
+    formula <- tryCatch(
+      filter_high_vif(data, threshold),
+      error = function(e) NULL  
+    )
+    list(data = data, formula = formula)  
+  })
+  
+  # Filter out data and formulas whose formulas are not NULL
+  filtered_results <- results[!sapply(results, function(x) is.null(x$formula))]
+  
+  # Returns a list of filtered data and formulas
+  list(
+    data = lapply(filtered_results, function(x) x$data),
+    formulas = lapply(filtered_results, function(x) x$formula)
+  )
+}
 
-#Study records for each categorical level of screening predictor variables were no less than 2
-data_v <- filter_data(data_v, columns_to_check)
-nrow(data_v) # 426         
-# write.xlsx(data_v,"data_v1.xlsx")
+# Using the updated function to process bootstrapped data
+set.seed(123)
+filtered_results_a <- process_bootstrap_data(bootstrap_data_a)
+filtered_results_v <- process_bootstrap_data(bootstrap_data_v)
+filtered_results_b <- process_bootstrap_data(bootstrap_data_b)
+filtered_results_p <- process_bootstrap_data(bootstrap_data_p)
 
-# change order of factor levels 
-##Geographic_division
-data_v$Geographic_division <- as.factor(data_v$Geographic_division)
-data_v$Geographic_division <- factor(data_v$Geographic_division, levels=c('Central China',
-                                                                          'East China',
-                                                                          'North China',
-                                                                          'Northeast China',
-                                                                          'Northwest China',
-                                                                          'South China',
-                                                                          'Southwest China'))
-#Ndvi
-data_v$Ndvi <- as.factor(data_v$Ndvi)
-data_v$Ndvi <- factor(data_v$Ndvi, levels=c('Peak ndvi','Higher ndvi',
-                                            'Medium ndvi','Low ndvi'))
-##Rodent_classification
-data_v$Rodent_classification <- as.factor(data_v$Rodent_classification)
-data_v$Rodent_classification <- factor(data_v$Rodent_classification, levels=c('Wild','Commensal','Captive'))
+# Get the filtered data and formulas separately
+filtered_data_a <- filtered_results_a$data
+filtered_formulas_a <- filtered_results_a$formulas
 
-##Sample_source
-data_v$Sample_source <- as.factor(data_v$Sample_source)
-data_v$Sample_source <- factor(data_v$Sample_source, levels=c('Alimentary or intestinal or faeces sample',
-                                                              'Blood or serum sample',
-                                                              'Body surface sample',
-                                                              'Brain sample',
-                                                              'Heart sample',
-                                                              'Kidney sample',
-                                                              'Liver sample',
-                                                              'Lung or respiratory tracts',
-                                                              'Spleen sample',
-                                                              'Mixed tissues'))
+filtered_data_v <- filtered_results_v$data
+filtered_formulas_v <- filtered_results_v$formulas
 
-##Detection_method
-data_v$Detection_method <- as.factor(data_v$Detection_method)
-data_v$Detection_method <- factor(data_v$Detection_method, levels=c('Gross observation or microbes',
-                                                                    'Molecular diagnostics',
-                                                                    'Serological examination'))
-##Rodent_family
-data_v$Rodent_family <- as.factor(data_v$Rodent_family)
-data_v$Rodent_family <- factor(data_v$Rodent_family, levels=c('Caviidae','Chinchillidae','Cricetidae',
-                                                              'Dipodidae','Hystricidae','Muridae',
-                                                              'Myocastoridae','Nesomyidae','Sciuridae',
-                                                              'Spalacidae'))
+filtered_data_b <- filtered_results_b$data
+filtered_formulas_b <- filtered_results_b$formulas
 
-##Time_interval
-data_v$Time_interval <- as.factor(data_v$Time_interval)
-data_v$Time_interval <- factor(data_v$Time_interval, levels=c('1950-2000',
-                                                              '2001-2010',
-                                                              '2011-2019',
-                                                              '2020-2023'))
-
-# make observation and study-level random effect
-data_v$observation=factor(1:nrow(data_v))
-data_v$Study=factor(data_v$Study)
-
-## Fit a mixed-effects model
-fit_null_v <- rma.mv(yi, vi, random=~1|Study/observation, 
-                     method="REML", data=data_v,
-                     control=list(optimizer="optim", optmethod="BFGS"))  ## Using experiment nested in publication as the random effect
-fit_null_v
-
-# Compare models (add first covariate)
-fit_var_v1 <- update(fit_null_v, mods = ~ Detection_method-1)
-fit_var_v2 <- update(fit_null_v, mods = ~ Geographic_division-1)
-fit_var_v3 <- update(fit_null_v, mods = ~ Ndvi-1)
-fit_var_v4 <- update(fit_null_v, mods = ~ Rodent_classification-1)
-fit_var_v5 <- update(fit_null_v, mods = ~ Rodent_family-1)
-fit_var_v6 <- update(fit_null_v, mods = ~ Time_interval-1)
-fit_var_v7 <- update(fit_null_v, mods = ~ Sample_source-1)
-
-# Check for variable covariance, when GVIF^(1/(2Df)) is greater than 2, it indicates a more severe covariance problem
-vif_values_v <- vif(lm(yi ~ Detection_method + Geographic_division + Ndvi + Rodent_classification + 
-                       Rodent_family + Time_interval + Sample_source,
-                     data = data_v))
-vif_values_v
-
-fit_v <- rma.mv(yi, vi, mods=~Detection_method + Geographic_division + Rodent_classification + 
-                              Rodent_family + Time_interval + Sample_source-1,
-                random=~1|Study/observation, 
-                method="REML", data=data_v,
-                control=control,
-                verbose=TRUE) 
-fit_v 
-
-# Testing the significance of fixed effects in the model
-anova(fit_v) 
-
-## #################      bacteria    ##########################################
-data_b <- data %>% filter(Pathogen_classiffication=="Bacteria")
-# write.xlsx(data_b,"data_b.xlsx")
-nrow(data_b)  
-
-#Study records for each categorical level of screening predictor variables were no less than 2
-data_b <- filter_data(data_b, columns_to_check)
-nrow(data_b) #  
-# write.xlsx(data_b,"data_b1.xlsx")
-
-# change order of factor levels 
-##Geographic_division
-data_b$Geographic_division <- as.factor(data_b$Geographic_division)
-data_b$Geographic_division <- factor(data_b$Geographic_division, levels=c('Central China',
-                                                                          'East China',
-                                                                          'North China',
-                                                                          'Northeast China',
-                                                                          'Northwest China',
-                                                                          'South China',
-                                                                          'Southwest China'))
-#Ndvi
-data_b$Ndvi <- as.factor(data_b$Ndvi)
-data_b$Ndvi <- factor(data_b$Ndvi, levels=c('Peak ndvi','Higher ndvi',
-                                            'Medium ndvi','Low ndvi'))
-##Rodent_classification
-data_b$Rodent_classification <- as.factor(data_b$Rodent_classification)
-data_b$Rodent_classification <- factor(data_b$Rodent_classification, levels=c('Wild','Commensal','Captive'))
-
-##Sample_source
-data_b$Sample_source <- as.factor(data_b$Sample_source)
-data_b$Sample_source <- factor(data_b$Sample_source, levels=c('Alimentary or intestinal or faeces sample',
-                                                              'Blood or serum sample',
-                                                              'Body surface sample',
-                                                              'Brain sample',
-                                                              'Heart sample',
-                                                              'Kidney sample',
-                                                              'Liver sample',
-                                                              'Lung or respiratory tracts',
-                                                              'Spleen sample',
-                                                              'Mixed tissues'))
-
-##Detection_method
-data_b$Detection_method <- as.factor(data_b$Detection_method)
-data_b$Detection_method <- factor(data_b$Detection_method, levels=c('Gross observation or microbes',
-                                                                    'Molecular diagnostics',
-                                                                    'Serological examination'))
-##Rodent_family
-data_b$Rodent_family <- as.factor(data_b$Rodent_family)
-data_b$Rodent_family <- factor(data_b$Rodent_family, levels=c('Caviidae','Chinchillidae','Cricetidae',
-                                                              'Dipodidae','Hystricidae','Muridae',
-                                                              'Myocastoridae','Nesomyidae','Sciuridae',
-                                                              'Spalacidae'))
-
-##Time_interval
-data_b$Time_interval <- as.factor(data_b$Time_interval)
-data_b$Time_interval <- factor(data_b$Time_interval, levels=c('1950-2000',
-                                                              '2001-2010',
-                                                              '2011-2019',
-                                                              '2020-2023'))
-# make observation and study-level random effect
-data_b$observation=factor(1:nrow(data_b))
-data_b$Study=factor(data_b$Study)
-
-## Fit a mixed-effects model
-fit_null_b <- rma.mv(yi, vi, random=~1|Study/observation, 
-                     method="REML", data=data_b,
-                     control=list(optimizer="optim", optmethod="BFGS"))  ## Using experiment nested in publication as the random effect
-fit_null_b
-
-# Compare models (add first covariate)
-fit_var_b1 <- update(fit_null_b, mods = ~ Detection_method-1)
-fit_var_b2 <- update(fit_null_b, mods = ~ Geographic_division-1)
-fit_var_b3 <- update(fit_null_b, mods = ~ Ndvi-1)
-fit_var_b4 <- update(fit_null_b, mods = ~ Rodent_classification-1)
-fit_var_b5 <- update(fit_null_b, mods = ~ Rodent_family-1)
-fit_var_b6 <- update(fit_null_b, mods = ~ Time_interval-1)
-fit_var_b7 <- update(fit_null_b, mods = ~ Sample_source-1)
-
-# Check for variable covariance, when GVIF^(1/(2Df)) is greater than 2, it indicates a more severe covariance problem
-vif_values_b <- vif(lm(yi ~ Detection_method + Geographic_division + Ndvi + Rodent_classification + 
-                       Rodent_family + Time_interval + Sample_source,
-                     data = data_b))
-vif_values_b
-
-fit_b<- rma.mv(yi, vi, mods=~Detection_method + Geographic_division + Rodent_classification + 
-                             Rodent_family + Time_interval + Sample_source-1,
-               random=~1|Study/observation, 
-               method="REML", data=data_b,
-               control=control,
-               verbose=TRUE) 
-fit_b 
-
-# Testing the significance of fixed effects in the model
-anova(fit_b) 
-
-#######################    parasites    ########################################
-data_p <- data %>% filter(Pathogen_classiffication=="Parasites")
-# write.xlsx(data_p,"data_p.xlsx")
-nrow(data_p)  ## 226
-
-#Study records for each categorical level of screening predictor variables were no less than 2
-data_p <- filter_data(data_p, columns_to_check)
-# write.xlsx(data_p,"data_p1.xlsx")
-nrow(data_p) # 225 
-
-# change order of factor levels
-##Geographic_division
-data_p$Geographic_division <- as.factor(data_p$Geographic_division)
-data_p$Geographic_division <- factor(data_p$Geographic_division, levels=c('Central China',
-                                                                          'East China',
-                                                                          'North China',
-                                                                          'Northeast China',
-                                                                          'Northwest China',
-                                                                          'South China',
-                                                                          'Southwest China'))
-#Ndvi
-data_p$Ndvi <- as.factor(data_p$Ndvi)
-data_p$Ndvi <- factor(data_p$Ndvi, levels=c('Peak ndvi','Higher ndvi',
-                                            'Medium ndvi','Low ndvi'))
-##Rodent_classification
-data_p$Rodent_classification <- as.factor(data_p$Rodent_classification)
-data_p$Rodent_classification <- factor(data_p$Rodent_classification, levels=c('Wild','Commensal','Captive'))
-
-##Sample_source
-data_p$Sample_source <- as.factor(data_p$Sample_source)
-data_p$Sample_source <- factor(data_p$Sample_source, levels=c('Alimentary or intestinal or faeces sample',
-                                                              'Blood or serum sample',
-                                                              'Body surface sample',
-                                                              'Brain sample',
-                                                              'Heart sample',
-                                                              'Kidney sample',
-                                                              'Liver sample',
-                                                              'Lung or respiratory tracts',
-                                                              'Spleen sample',
-                                                              'Mixed tissues'))
-
-##Detection_method
-data_p$Detection_method <- as.factor(data_p$Detection_method)
-data_p$Detection_method <- factor(data_p$Detection_method, levels=c('Gross observation or microbes',
-                                                                    'Molecular diagnostics',
-                                                                    'Serological examination'))
-##Rodent_family
-data_p$Rodent_family <- as.factor(data_p$Rodent_family)
-data_p$Rodent_family <- factor(data_p$Rodent_family, levels=c('Caviidae','Chinchillidae','Cricetidae',
-                                                              'Dipodidae','Hystricidae','Muridae',
-                                                              'Myocastoridae','Nesomyidae','Sciuridae',
-                                                              'Spalacidae'))
-
-##Time_interval
-data_p$Time_interval <- as.factor(data_p$Time_interval)
-data_p$Time_interval <- factor(data_p$Time_interval, levels=c('1950-2000',
-                                                              '2001-2010',
-                                                              '2011-2019',
-                                                              '2020-2023'))
-# make observation and study-level random effect
-data_p$observation=factor(1:nrow(data_p))
-data_p$Study=factor(data_p$Study)
+filtered_data_p <- filtered_results_p$data
+filtered_formulas_p <- filtered_results_p$formulas
 
 
-## Fit a mixed-effects model
-fit_null_p <- rma.mv(yi, vi, random=~1|Study/observation, 
-                     method="REML", data=data_p,
-                     control=list(optimizer="optim", optmethod="BFGS"))  ## Using experiment nested in publication as the random effect
-fit_null_p
+# Define the function to run the analysis and capture results
+run_analysis_results <- function(data, formula) {
+  tryCatch({
+    # Execute model fitting
+    fit <- rma.mv(
+      yi, vi,
+      mods = as.formula(formula),
+      random = ~1 | Study/Observation,
+      method = "REML",
+      data = data,
+      control = control,
+      verbose = TRUE
+    )
+    return(fit)  # Return the fitted model
+  }, error = function(e) {
+    # Handle errors gracefully
+    message("Error in model fitting: ", e$message)
+    return(NULL)  # Return NULL to indicate failure
+  })
+}
 
-# Compare models (add first covariate)
-fit_var_p1 <- update(fit_null_p, mods = ~ Detection_method-1)
-fit_var_p2 <- update(fit_null_p, mods = ~ Geographic_division-1)
-fit_var_p3 <- update(fit_null_p, mods = ~ Ndvi-1)
-fit_var_p4 <- update(fit_null_p, mods = ~ Rodent_classification-1)
-fit_var_p5 <- update(fit_null_p, mods = ~ Rodent_family-1)
-fit_var_p6 <- update(fit_null_p, mods = ~ Time_interval-1)
-fit_var_p7 <- update(fit_null_p, mods = ~ Sample_source-1)
+# Iterating model evaluation
+fit_a <- mapply(run_analysis_results, filtered_data_a, filtered_formulas_a, SIMPLIFY = FALSE)
+fit_v <- mapply(run_analysis_results, filtered_data_v, filtered_formulas_v, SIMPLIFY = FALSE)
+fit_b <- mapply(run_analysis_results, filtered_data_b, filtered_formulas_b, SIMPLIFY = FALSE)
+fit_p <- mapply(run_analysis_results, filtered_data_p, filtered_formulas_p, SIMPLIFY = FALSE)
 
-vif_values_p <- vif(lm(yi ~ Detection_method + Geographic_division + Ndvi + Rodent_classification + 
-                         Rodent_family + Time_interval + Sample_source,
-                       data = data_p))
-vif_values_p
+# Filter out NULL objects in fit_results_
+fit_results_a <- Filter(function(x) !is.null(x), fit_a)
+fit_results_v <- Filter(function(x) !is.null(x), fit_v)
+fit_results_b <- Filter(function(x) !is.null(x), fit_b)
+fit_results_p <- Filter(function(x) !is.null(x), fit_p)
 
-fit_p<- rma.mv(yi, vi, mods=~ Geographic_division  + Ndvi + Rodent_family + 
-                              Time_interval + Sample_source-1,
-               random=~1|Study/observation, 
-               method="REML", data=data_p,
-               control=control,
-               verbose=TRUE) 
-fit_p 
+# Function to extract results from the model fit
+extract_model_results <- function(fit) {
+  if (!is.null(fit)) {
+    model_results <- coef(summary(fit))  # Extract model coefficients
+    return(data.frame(
+      Term = rownames(model_results),
+      Estimate = model_results[, "estimate"],
+      StdError = model_results[, "se"],
+      ZValue = model_results[, "zval"],
+      PValue = model_results[, "pval"],
+      CILower = model_results[, "ci.lb"],
+      CIUpper = model_results[, "ci.ub"]
+    ))
+  } else {
+    return(NULL)  # Return NULL if fit is empty
+  }
+}
 
-# Testing the significance of fixed effects in the model
-anova(fit_p) 
+# Extract and store model results for each dataset
+results_a <- lapply(fit_results_a, extract_model_results)
+results_v <- lapply(fit_results_v, extract_model_results)
+results_b <- lapply(fit_results_b, extract_model_results)
+results_p <- lapply(fit_results_p, extract_model_results)
+
+# Get unique terms across all results
+all_terms_a <- unique(unlist(lapply(results_a, function(x) if (!is.null(x)) x$Term)))
+all_terms_v <- unique(unlist(lapply(results_v, function(x) if (!is.null(x)) x$Term)))
+all_terms_b <- unique(unlist(lapply(results_b, function(x) if (!is.null(x)) x$Term)))
+all_terms_p <- unique(unlist(lapply(results_p, function(x) if (!is.null(x)) x$Term)))
+
+# Unified results for each type of results (a, v, b, p)
+unified_results_a <- do.call(rbind, lapply(results_a, function(result) {
+  if (is.null(result)) {
+    return(data.frame(
+      Term = all_terms_a,
+      Estimate = NA, StdError = NA, ZValue = NA,
+      PValue = NA, CILower = NA, CIUpper = NA
+    ))
+  }
+  merged_result <- merge(data.frame(Term = all_terms_a), result, by = "Term", all.x = TRUE)
+  return(merged_result)
+}))
+
+unified_results_v <- do.call(rbind, lapply(results_v, function(result) {
+  if (is.null(result)) {
+    return(data.frame(
+      Term = all_terms_v,
+      Estimate = NA, StdError = NA, ZValue = NA,
+      PValue = NA, CILower = NA, CIUpper = NA
+    ))
+  }
+  merged_result <- merge(data.frame(Term = all_terms_v), result, by = "Term", all.x = TRUE)
+  return(merged_result)
+}))
+
+unified_results_b <- do.call(rbind, lapply(results_b, function(result) {
+  if (is.null(result)) {
+    return(data.frame(
+      Term = all_terms_b,
+      Estimate = NA, StdError = NA, ZValue = NA,
+      PValue = NA, CILower = NA, CIUpper = NA
+    ))
+  }
+  merged_result <- merge(data.frame(Term = all_terms_b), result, by = "Term", all.x = TRUE)
+  return(merged_result)
+}))
+
+unified_results_p <- do.call(rbind, lapply(results_p, function(result) {
+  if (is.null(result)) {
+    return(data.frame(
+      Term = all_terms_p,
+      Estimate = NA, StdError = NA, ZValue = NA,
+      PValue = NA, CILower = NA, CIUpper = NA
+    ))
+  }
+  merged_result <- merge(data.frame(Term = all_terms_p), result, by = "Term", all.x = TRUE)
+  return(merged_result)
+}))
+
+output_dir <- "model_results"  
+
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+
+write.xlsx(unified_results_a, file = file.path(output_dir, "unified_results_a.xlsx"), rowNames = FALSE)
+write.xlsx(unified_results_v, file = file.path(output_dir, "unified_results_v.xlsx"), rowNames = FALSE)
+write.xlsx(unified_results_b, file = file.path(output_dir, "unified_results_b.xlsx"), rowNames = FALSE)
+write.xlsx(unified_results_p, file = file.path(output_dir, "unified_results_p.xlsx"), rowNames = FALSE)
+
+# Compute mean results (delete NAs)
+mean_results_a <- aggregate(
+  . ~ Term,  # 按 Term 分组
+  data = na.omit(unified_results_a),  
+  FUN = mean
+)
+
+mean_results_v <- aggregate(
+  . ~ Term,  # 按 Term 分组
+  data = na.omit(unified_results_v),  
+  FUN = mean
+)
+
+mean_results_b <- aggregate(
+  . ~ Term,  # 按 Term 分组
+  data = na.omit(unified_results_b),  
+  FUN = mean
+)
+
+mean_results_p <- aggregate(
+  . ~ Term,  # 按 Term 分组
+  data = na.omit(unified_results_p),  
+  FUN = mean
+)
+
+output_dir <- "model_results"
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, showWarnings = FALSE)
+}
+
+# Save the mean results 
+output_file_a <- file.path(output_dir, paste0("mean_results_a_", paste(sample(letters, 5, TRUE), collapse = ""), ".xlsx"))
+tryCatch({
+  write.xlsx(mean_results_a, output_file_a)
+  message("Results successfully saved to ", output_file_a)
+}, error = function(e) {
+  message("Error in saving results for V: ", e$message)
+})
+
+# Save the mean results for unified_results_v
+output_file_v <- file.path(output_dir, paste0("mean_results_v_", paste(sample(letters, 5, TRUE), collapse = ""), ".xlsx"))
+tryCatch({
+  write.xlsx(mean_results_v, output_file_v)
+  message("Results successfully saved to ", output_file_v)
+}, error = function(e) {
+  message("Error in saving results for V: ", e$message)
+})
+
+# Save the mean results for unified_results_b
+output_file_b <- file.path(output_dir, paste0("mean_results_b_", paste(sample(letters, 5, TRUE), collapse = ""), ".xlsx"))
+tryCatch({
+  write.xlsx(mean_results_b, output_file_b)
+  message("Results successfully saved to ", output_file_b)
+}, error = function(e) {
+  message("Error in saving results for B: ", e$message)
+})
+
+# Save the mean results for unified_results_p
+output_file_p <- file.path(output_dir, paste0("mean_results_p_", paste(sample(letters, 5, TRUE), collapse = ""), ".xlsx"))
+tryCatch({
+  write.xlsx(mean_results_p, output_file_p)
+  message("Results successfully saved to ", output_file_p)
+}, error = function(e) {
+  message("Error in saving results for P: ", e$message)
+})
+
+
+# Save the model fitting and summary statistics (i2, QM)
+i2_results_a <- do.call(rbind, lapply(fit_results_a, i2))
+i2_results_v <- do.call(rbind, lapply(fit_results_v, i2))
+i2_results_b <- do.call(rbind, lapply(fit_results_b, i2))
+i2_results_p <- do.call(rbind, lapply(fit_results_p, i2))
+
+# Create an Excel workbook to store the results
+output_dir <- "model_results"
+dir.create(output_dir, showWarnings = FALSE)  
+output_file <- file.path(output_dir, paste0("i2_results_", paste(sample(letters, 5, TRUE), collapse = ""), ".xlsx"))
+message("Output file path: ", output_file)
+
+
+if (!file.access(output_dir, 2) == 0) stop("No write access to output directory.")
+tryCatch({
+  wb <- createWorkbook()
+  add_non_empty_sheet <- function(wb, sheet_name, data) {
+    if (!is.null(data) && nrow(data) > 0) {  
+      addWorksheet(wb, sheet_name)          
+      writeData(wb, sheet_name, data)      
+    } else {
+      message("Skipping ", sheet_name, " as it is empty or NULL.")
+    }
+  }
+  
+  add_non_empty_sheet(wb, "i2_a", i2_results_a)
+  add_non_empty_sheet(wb, "i2_v", i2_results_v)
+  add_non_empty_sheet(wb, "i2_b", i2_results_b)
+  add_non_empty_sheet(wb, "i2_p", i2_results_p)
+  
+  saveWorkbook(wb, output_file, overwrite = TRUE)
+  message("i2 results successfully saved to ", output_file)
+}, error = function(e) {
+  message("Error in saving i2 results to Excel: ", e$message)
+})
