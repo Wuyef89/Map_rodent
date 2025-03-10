@@ -34,7 +34,7 @@ data <- data %>%
 data <- data[-which(is.na(data$NDVI)),,]
 data <- data[-which(is.na(data$Time_interval)),,]
 data <- data[-which(data$Rodents_type == 'Unknown'),,]
-data <- data[-which(data$Test_method =='Unidentified examination method'),,]
+data <- data[-which(data$Testing_method =='Unidentified examination method'),,]
 data <- data[-which(data$Sample_source%in%c('Unclassified sample')==TRUE),,]
 nrow(data) #1214
 
@@ -51,11 +51,11 @@ levels_list <- list(
                     'Body surface sample', 'Brain sample', 'Heart sample', 'Kidney sample', 
                     'Liver sample', 'Lung or respiratory tract sample', 'Spleen sample', 
                     'Mixed tissue sample'),
-  Test_method = c('Gross or microscopy examination', 'Molecular examination', 'Serological examination'),
+  Testing_method = c('Gross or microscopy examination', 'Molecular examination', 'Serological examination'),
   Rodent_family = c('Caviidae', 'Chinchillidae', 'Cricetidae', 'Dipodidae', 'Hystricidae', 
                     'Muridae', 'Myocastoridae', 'Nesomyidae', 'Sciuridae', 'Spalacidae'),
-  Geographical_division = c('Central China', 'East China', 'North China', 'Northeast China', 
-                            'Northwest China', 'South China', 'Southwest China'),
+  Region = c('Central China', 'Eastern China', 'Northern China', 'Northeastern China', 
+                            'Northwestern China', 'Southern China', 'Southwestern China'),
   Time_interval = c('1950-2000', '2001-2010', '2011-2019', '2020-2023'),
   NDVI = c('Peak NDVI', 'Higher NDVI', 'Medium NDVI', 'Low NDVI')
 )
@@ -82,8 +82,8 @@ datasets <- list(
   data_b = data %>% filter(Pathogen_type == "Bacteria"),
   data_p = data %>% filter(Pathogen_type == "Parasites")
 )
-columns_to_check <- c("Rodents_type", "Sample_source", "Test_method", 
-                      "Rodent_family", "Geographical_division", "Time_interval", "NDVI")
+columns_to_check <- c("Rodents_type", "Sample_source", "Testing_method", 
+                      "Rodent_family", "Region", "Time_interval", "NDVI")
 
 # Apply transformations to each dataset
 datasets <- lapply(datasets, function(dataset) {
@@ -147,8 +147,8 @@ resampled_data_list <- list(a = bootstrap_data_a, v = bootstrap_data_v, b = boot
 
 # Define function: Calculate GVIF and remove highly collinear variables
 filter_high_vif <- function(data, threshold = 2) {
-  full_formula <- yi ~ Sample_source + Geographical_division + Rodents_type + 
-    Test_method + Rodent_family + Time_interval + NDVI - 1
+  full_formula <- yi ~ Sample_source + Region + Rodents_type + 
+    Testing_method + Rodent_family + Time_interval + NDVI - 1
   repeat {
     lm_model <- lm(full_formula, data = data)
     vif_values <- vif(lm_model)
