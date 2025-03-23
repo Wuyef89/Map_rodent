@@ -100,7 +100,7 @@ datasets <- lapply(datasets, function(dataset) {
 i2=function(model){
   
   ## metafor site code for I2
-  W=diag(1/model$vi)  ##
+  W=diag(1/model$vi)  
   X=model.matrix(model)
   P=W - W %*% X %*% solve(t(X) %*% W %*% X) %*% t(X) %*% W
   I2=100 * sum(model$sigma2) / (sum(model$sigma2) + (model$k-model$p)/sum(diag(P)))
@@ -326,25 +326,25 @@ write.xlsx(unified_results_p, file = file.path(output_dir, "unified_results_p.xl
 
 # Compute mean results (delete NAs)
 mean_results_a <- aggregate(
-  . ~ Term,  # 按 Term 分组
+  . ~ Term,  
   data = na.omit(unified_results_a),  
   FUN = mean
 )
 
 mean_results_v <- aggregate(
-  . ~ Term,  # 按 Term 分组
+  . ~ Term,  
   data = na.omit(unified_results_v),  
   FUN = mean
 )
 
 mean_results_b <- aggregate(
-  . ~ Term,  # 按 Term 分组
+  . ~ Term,  
   data = na.omit(unified_results_b),  
   FUN = mean
 )
 
 mean_results_p <- aggregate(
-  . ~ Term,  # 按 Term 分组
+  . ~ Term,  
   data = na.omit(unified_results_p),  
   FUN = mean
 )
